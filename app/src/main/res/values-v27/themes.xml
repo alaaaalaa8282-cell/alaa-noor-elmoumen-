@@ -1,1 +1,9 @@
 
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.NoorApp.FullScreen" parent="Theme.NoorApp">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowShowWhenLocked">true</item>
+        <item name="android:windowTurnScreenOn">true</item>
+    </style>
+</resources>
