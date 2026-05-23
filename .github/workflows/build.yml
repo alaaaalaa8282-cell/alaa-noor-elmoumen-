@@ -12,6 +12,8 @@ jobs:
     name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────
@@ -48,7 +50,7 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
 
-      # ── 6. حذف PNG المكررة ─────────────────────────────────────────
+      # ── 6. حذف PNG المكررة (نحتفظ بـ webp فقط) ──────────────────
       - name: Remove duplicate PNG launcher icons
         run: |
           find app/src/main/res/mipmap-* -name "ic_launcher*.png" -delete
@@ -64,9 +66,18 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      # ── 9. Build Release APK موقّع ─────────────────────────────────
+      # ── 9. Upload Debug APK ─────────────────────────────────────────
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoorApp-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      # ── 10. Build Release APK (موقّع) ───────────────────────────────
       - name: Build Signed Release APK
         env:
+          STORE_FILE: release.keystore
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -78,46 +89,15 @@ jobs:
             -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
             --no-daemon
 
-      # ── 10. حذف الـ Keystore ────────────────────────────────────────
+      # ── 11. Upload Signed Release APK ──────────────────────────────
+      - name: Upload Signed Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoorApp-release-signed-${{ github.run_number }}
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      # ── 12. حذف الـ Keystore من السيرفر ────────────────────────────
       - name: Clean up keystore
         if: always()
         run: rm -f app/release.keystore
-
-      # ── 11. إنشاء GitHub Release تلقائي ────────────────────────────
-      - name: Get version name
-        id: version
-        run: |
-          VERSION=$(grep "versionName" app/build.gradle | sed 's/.*versionName "\(.*\)"/\1/' | tr -d ' ')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=v$VERSION-build-${{ github.run_number }}" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: "نور المؤمن ${{ steps.version.outputs.version }} — Build #${{ github.run_number }}"
-          body: |
-            ## تطبيق نور المؤمن 🕌
-            
-            **إهداء إلى روح محمد عبد العظيم الطويل رحمه الله**
-            
-            ### الميزات:
-            - 🕌 مواقيت الصلاة بالموقع الجغرافي
-            - 🧭 اتجاه القبلة
-            - 📿 الأذكار الصوتية (10 أذكار)
-            - 🎙️ الأذان بأصوات 10 قراء
-            - 📖 الأذكار اليومية مع العداد
-            - 📱 المسبحة الرقمية
-            - 🏆 التحديات الإسلامية 30 يوم
-            - 📖 القرآن الكريم
-            
-            ### ملفات التحميل:
-            - **app-release.apk** — نسخة موقّعة جاهزة للتثبيت ✅
-            - **app-debug.apk** — نسخة للاختبار
-          files: |
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/apk/debug/app-debug.apk
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
