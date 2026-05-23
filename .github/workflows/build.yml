@@ -1,0 +1,66 @@
+name: Build NoorApp APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Java 17 ────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      # ── 3. Gradle wrapper permission ──────────────────────────────
+      - name: Grant execute permission to gradlew
+        run: chmod +x gradlew
+
+      # ── 4. Cache Gradle ───────────────────────────────────────────
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # ── 5. Build Debug APK ────────────────────────────────────────
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # ── 6. Upload Debug APK ───────────────────────────────────────
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoorApp-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      # ── 7. Build Release APK (unsigned) ──────────────────────────
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --no-daemon
+
+      # ── 8. Upload Release APK ─────────────────────────────────────
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoorApp-release-${{ github.run_number }}
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 30
