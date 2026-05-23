@@ -25,20 +25,20 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # ── 3. تحميل gradle-wrapper.jar (الحل الأساسي) ─────────────────
-      - name: Download gradle-wrapper.jar
-        run: |
-          mkdir -p gradle/wrapper
-          curl -L --retry 3 \
-            "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar" \
-            -o gradle/wrapper/gradle-wrapper.jar
-          echo "JAR size: $(du -sh gradle/wrapper/gradle-wrapper.jar)"
+      # ── 3. توليد gradle-wrapper.jar ────────────────────────────────
+      - name: Setup Gradle & regenerate wrapper JAR
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.4'
+
+      - name: Regenerate gradle wrapper
+        run: gradle wrapper --gradle-version=8.4 --distribution-type=bin
 
       # ── 4. Permission ───────────────────────────────────────────────
       - name: Grant execute permission to gradlew
         run: chmod +x gradlew
 
-      # ── 5. Cache Gradle ─────────────────────────────────────────────
+      # ── 5. Cache ────────────────────────────────────────────────────
       - name: Cache Gradle packages
         uses: actions/cache@v4
         with:
@@ -46,14 +46,19 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          restore-keys: ${{ runner.os }}-gradle-
 
-      # ── 6. Build Debug APK ──────────────────────────────────────────
+      # ── 6. فك تشفير الـ Keystore ───────────────────────────────────
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/release.keystore
+          echo "Keystore decoded successfully"
+
+      # ── 7. Build Debug APK ──────────────────────────────────────────
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      # ── 7. Upload Debug APK ─────────────────────────────────────────
+      # ── 8. Upload Debug APK ─────────────────────────────────────────
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -61,14 +66,30 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-      # ── 8. Build Release APK ────────────────────────────────────────
-      - name: Build Release APK
-        run: ./gradlew assembleRelease --no-daemon
+      # ── 9. Build Release APK (موقّع) ───────────────────────────────
+      - name: Build Signed Release APK
+        env:
+          STORE_FILE: release.keystore
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/app/release.keystore \
+            -Pandroid.injected.signing.store.password=$STORE_PASSWORD \
+            -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
+            -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
+            --no-daemon
 
-      # ── 9. Upload Release APK ───────────────────────────────────────
-      - name: Upload Release APK
+      # ── 10. Upload Signed Release APK ──────────────────────────────
+      - name: Upload Signed Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: NoorApp-release-${{ github.run_number }}
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          name: NoorApp-release-signed-${{ github.run_number }}
+          path: app/build/outputs/apk/release/app-release.apk
           retention-days: 30
+
+      # ── 11. حذف الـ Keystore من السيرفر ────────────────────────────
+      - name: Clean up keystore
+        if: always()
+        run: rm -f app/release.keystore
