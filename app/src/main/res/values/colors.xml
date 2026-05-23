@@ -1,25 +1,13 @@
 <resources>
-    <!-- Dark Background -->
     <color name="background_dark">#FF010F0A</color>
     <color name="surface_dark">#FF022C22</color>
     <color name="card_dark">#5A064E3B</color>
-
-    <!-- Gold -->
     <color name="gold">#FFC9A84C</color>
     <color name="gold_light">#FFF0D060</color>
-
-    <!-- Green -->
     <color name="green">#FF064E3B</color>
     <color name="green_light">#FF10B981</color>
-
-    <!-- Light Background -->
     <color name="background_light">#FFECFDF5</color>
     <color name="surface_light">#FFD1FAE5</color>
-
-    <!-- Text -->
     <color name="text_primary">#FFF0FDF4</color>
     <color name="text_secondary">#FFA7F3D0</color>
-
-    <!-- Launcher -->
-    <color name="ic_launcher_background">#FF064E3B</color>
 </resources>
