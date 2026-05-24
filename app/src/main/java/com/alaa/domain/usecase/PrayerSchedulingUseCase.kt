@@ -39,6 +39,7 @@ class PrayerSchedulingUseCase(private val app: Application) {
 
             val intent = Intent(app, PrayerAlarmService::class.java).apply {
                 putExtra(Constants.PRAYER_NAME_KEY, prayer.nameAr)
+                putExtra("prayer_key", prayer.nameEn)  // Fajr, Dhuhr, Asr, Maghrib, Isha
             }
             val pi = PendingIntent.getForegroundService(
                 app, reqCode++, intent,
