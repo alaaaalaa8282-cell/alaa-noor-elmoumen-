@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -25,26 +26,40 @@ class PrayerAlarmService : Service() {
     override fun onBind(intent: Intent?) = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == Constants.ACTION_STOP_AZAN) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        if (intent?.action == Constants.ACTION_STOP_AZAN) { stopSelf(); return START_NOT_STICKY }
 
         val prayerName = intent?.getStringExtra(Constants.PRAYER_NAME_KEY) ?: "الصلاة"
+        val prayerKey  = intent?.getStringExtra("prayer_key") ?: "Fajr"
+
         isPlaying = true
         acquireWakeLock()
         createChannel()
         startForeground(Constants.NOTIF_AZAN_ID, buildNotification(prayerName))
-
-        // Launch full-screen activity
-        val fullScreenIntent = AzanFullScreenActivity.newIntent(this, prayerName)
-        startActivity(fullScreenIntent)
-
-        playAzan()
+        startActivity(AzanFullScreenActivity.newIntent(this, prayerName))
+        playAzan(prayerKey)
         return START_NOT_STICKY
     }
 
-    private fun playAzan() {
+    // ── يقرأ الأذان المختار لكل صلاة على حدة ──────────────────────
+    private fun getAzanRes(prayerKey: String): Int {
+        val prefs = getSharedPreferences("prayer_prefs", Context.MODE_PRIVATE)
+        // كل صلاة ليها مفتاحها الخاص prayerAdhan_Fajr / prayerAdhan_Dhuhr ...
+        val qariKey = prefs.getString("prayerAdhan_$prayerKey", "makkah") ?: "makkah"
+        return when (qariKey) {
+            "mishary_alafasi"      -> R.raw.azan_mishary_alafasi
+            "abed_albaset"         -> R.raw.azan_abed_albaset
+            "al_hosary"            -> R.raw.azan_al_hosary
+            "al_nakshabandy"       -> R.raw.azan_al_nakshabandy
+            "mansoor_al_zahrani"   -> R.raw.azan_mansoor_al_zahrani
+            "mohamed_refat"        -> R.raw.azan_mohamed_refat
+            "mohammed_almenshawy"  -> R.raw.azan_mohammed_almenshawy
+            "nasser_alqatami"      -> R.raw.azan_nasser_alqatami
+            "suhaib_khatba"        -> R.raw.azan_suhaib_khatba
+            else                   -> R.raw.azan_makkah
+        }
+    }
+
+    private fun playAzan(prayerKey: String) {
         try {
             val am = getSystemService(AUDIO_SERVICE) as AudioManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -58,16 +73,12 @@ class PrayerAlarmService : Service() {
                 audioFocusRequest = req
                 am.requestAudioFocus(req)
             }
-            // Play built-in notification sound as placeholder
-            // Replace R.raw.azan_sound with your actual azan audio file
-            mediaPlayer = MediaPlayer.create(this, R.raw.azan_sound)?.apply {
+            mediaPlayer = MediaPlayer.create(this, getAzanRes(prayerKey))?.apply {
                 isLooping = false
                 setOnCompletionListener { stopSelf() }
                 start()
             }
-        } catch (e: Exception) {
-            stopSelf()
-        }
+        } catch (_: Exception) { stopSelf() }
     }
 
     override fun onDestroy() {
@@ -75,11 +86,8 @@ class PrayerAlarmService : Service() {
         try { mediaPlayer?.stop(); mediaPlayer?.release() } catch (_: Exception) {}
         mediaPlayer = null
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                audioFocusRequest?.let {
-                    (getSystemService(AUDIO_SERVICE) as AudioManager).abandonAudioFocusRequest(it)
-                }
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                audioFocusRequest?.let { (getSystemService(AUDIO_SERVICE) as AudioManager).abandonAudioFocusRequest(it) }
         } catch (_: Exception) {}
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
         sendBroadcast(Intent(Constants.ACTION_STOP_AZAN))
@@ -95,15 +103,11 @@ class PrayerAlarmService : Service() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
-            if (nm.getNotificationChannel(Constants.CHANNEL_AZAN_ID) == null) {
+            if (nm.getNotificationChannel(Constants.CHANNEL_AZAN_ID) == null)
                 nm.createNotificationChannel(
-                    NotificationChannel(
-                        Constants.CHANNEL_AZAN_ID,
-                        "الأذان",
-                        NotificationManager.IMPORTANCE_HIGH
-                    ).apply { setSound(null, null) }
+                    NotificationChannel(Constants.CHANNEL_AZAN_ID, "الأذان", NotificationManager.IMPORTANCE_HIGH)
+                        .apply { setSound(null, null) }
                 )
-            }
         }
     }
 
