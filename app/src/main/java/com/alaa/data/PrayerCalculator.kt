@@ -148,4 +148,3 @@ object PrayerCalculator {
         return Triple(hd, months.getOrNull(hm - 1) ?: "", hy)
     }
 }
-
