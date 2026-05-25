@@ -1,142 +1,144 @@
-package com.alaa.presentation.screen.home
+package com.alaa.presentation.home
 
 import android.annotation.SuppressLint
-import android.app.Application
 import android.content.Context
-import android.location.Location
-import android.location.LocationListener
-import android.location.LocationManager
-import android.os.Bundle
-import androidx.lifecycle.AndroidViewModel
+import android.location.Geocoder
+import android.os.Looper
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.alaa.data.PrayerCalculator
-import com.alaa.data.models.PrayerTime
-import kotlinx.coroutines.Job
+import com.alaa.data.model.PrayerData
+import com.alaa.data.model.WeatherData
+import com.alaa.data.prefs.PrefsManager
+import com.alaa.data.repository.PrayerRepository
+import com.alaa.data.repository.WeatherRepository
+import com.alaa.utils.PrayerScheduler
+import com.google.android.gms.location.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.util.Calendar
+import java.util.Locale
 
-data class HomeUiState(
-    val prayerTimes : List<PrayerTime>  = emptyList(),
-    val hijriDay    : Int               = 0,
-    val hijriMonth  : String            = "",
-    val hijriYear   : Int               = 0,
-    val gregorian   : String            = "",
-    val countdown   : String            = "--:--:--",
-    val nextPrayer  : String            = "",
-    val locationOk  : Boolean           = false,
-    val lat         : Double            = 30.0,
-    val lng         : Double            = 31.0,
-    val calcMethod  : String            = "Makkah",
-    val darkMode    : Boolean           = true
+data class HomeState(
+    val prayerData:  PrayerData  = PrayerData(),
+    val weatherData: WeatherData = WeatherData(),
+    val cityName:    String      = "جارٍ تحديد الموقع...",
+    val isLoading:   Boolean     = true,
+    val lat:         Double      = 0.0,
+    val lon:         Double      = 0.0,
 )
 
-class HomeViewModel(app: Application) : AndroidViewModel(app) {
+class HomeViewModel(
+    private val prayerRepo:  PrayerRepository,
+    private val weatherRepo: WeatherRepository,
+    private val prefs:       PrefsManager,
+) : ViewModel() {
 
-    private val prefs = app.getSharedPreferences("prayer_prefs", Context.MODE_PRIVATE)
-    private val _state = MutableStateFlow(HomeUiState())
-    val state: StateFlow<HomeUiState> = _state.asStateFlow()
+    private val _state = MutableStateFlow(HomeState())
+    val state: StateFlow<HomeState> = _state.asStateFlow()
 
-    private var countdownJob: Job? = null
-    private val SALAH = listOf("الفجر", "الظهر", "العصر", "المغرب", "العشاء")
-
-    init {
-        loadSavedState()
-        updateHijri()
-        recalcPrayers()
-        startCountdown()
-    }
-
-    private fun loadSavedState() {
-        _state.value = _state.value.copy(
-            lat        = prefs.getFloat("lat", 30f).toDouble(),
-            lng        = prefs.getFloat("lng", 31f).toDouble(),
-            calcMethod = prefs.getString("calcMethod", "Makkah") ?: "Makkah",
-            darkMode   = prefs.getBoolean("darkMode", true)
-        )
-    }
-
-    private fun updateHijri() {
-        val cal  = Calendar.getInstance()
-        val h    = PrayerCalculator.toHijri(cal)
-        val days = listOf("الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت")
-        val greg = "${days[cal.get(Calendar.DAY_OF_WEEK) - 1]}، ${cal.get(Calendar.DAY_OF_MONTH)} / ${cal.get(Calendar.MONTH)+1} / ${cal.get(Calendar.YEAR)}"
-        _state.value = _state.value.copy(hijriDay = h.first, hijriMonth = h.second, hijriYear = h.third, gregorian = greg)
-    }
-
-    fun recalcPrayers() {
-        val s = _state.value
-        val times = PrayerCalculator.calculate(s.lat, s.lng, method = s.calcMethod)
-        _state.value = s.copy(prayerTimes = times)
-    }
-
-    private fun fixHour(h: Double): Double = h - 24.0 * Math.floor(h / 24.0)
-
-    private fun getNextPrayer(): Pair<String, Double>? {
-        val now = Calendar.getInstance()
-        val nowH = now.get(Calendar.HOUR_OF_DAY) + now.get(Calendar.MINUTE) / 60.0 + now.get(Calendar.SECOND) / 3600.0
-        val prayers = _state.value.prayerTimes.filter { it.nameAr in SALAH }
-        for (p in prayers) {
-            val lt = fixHour(p.decimalLocal)
-            if (lt > nowH) return Pair(p.nameAr, lt)
+    fun init(context: Context) {
+        // لو عندنا موقع محفوظ من قبل — استخدمه فوراً
+        val savedLat = prefs.latitude
+        val savedLon = prefs.longitude
+        if (savedLat != 0.0 && savedLon != 0.0) {
+            _state.update { it.copy(cityName = prefs.cityName, lat = savedLat, lon = savedLon) }
+            loadData(context, savedLat, savedLon)
         }
-        val fajr = prayers.firstOrNull { it.nameAr == "الفجر" }
-        return fajr?.let { Pair(it.nameAr, fixHour(it.decimalLocal) + 24.0) }
-    }
-
-    private fun startCountdown() {
-        countdownJob?.cancel()
-        countdownJob = viewModelScope.launch {
-            while (true) {
-                val next = getNextPrayer()
-                if (next != null) {
-                    val now = Calendar.getInstance()
-                    val nowS = now.get(Calendar.HOUR_OF_DAY) * 3600 + now.get(Calendar.MINUTE) * 60 + now.get(Calendar.SECOND)
-                    var diff = (next.second * 3600 - nowS).toLong()
-                    if (diff < 0) diff += 86400L
-                    val h = diff / 3600; val m = (diff % 3600) / 60; val s = diff % 60
-                    _state.value = _state.value.copy(
-                        countdown  = "%02d:%02d:%02d".format(h, m, s),
-                        nextPrayer = next.first
-                    )
-                }
-                delay(1000)
-            }
-        }
+        // وبعدين جيب الموقع الجديد
+        fetchLocation(context)
+        startCountdownTick()
     }
 
     @SuppressLint("MissingPermission")
     fun fetchLocation(context: Context) {
         try {
-            val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            val listener = object : LocationListener {
-                override fun onLocationChanged(loc: Location) {
-                    lm.removeUpdates(this)
-                    val lat = loc.latitude; val lng = loc.longitude
-                    prefs.edit().putFloat("lat", lat.toFloat()).putFloat("lng", lng.toFloat()).apply()
-                    _state.value = _state.value.copy(lat = lat, lng = lng, locationOk = true)
-                    recalcPrayers()
+            val fusedClient = LocationServices.getFusedLocationProviderClient(context)
+
+            // أولاً جرب getLastLocation
+            fusedClient.lastLocation.addOnSuccessListener { location ->
+                if (location != null) {
+                    onLocationReceived(context, location.latitude, location.longitude)
+                } else {
+                    // لو مفيش cached location — اطلب واحدة جديدة
+                    requestFreshLocation(context, fusedClient)
                 }
-                @Deprecated("Deprecated in Java")
-                override fun onStatusChanged(p: String?, s: Int, extras: Bundle?) {}
+            }.addOnFailureListener {
+                requestFreshLocation(context, fusedClient)
             }
-            val provider = when {
-                lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-                lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
-                else -> null
+        } catch (e: Exception) {
+            _state.update { it.copy(cityName = "تعذّر تحديد الموقع", isLoading = false) }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun requestFreshLocation(context: Context, fusedClient: FusedLocationProviderClient) {
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
+            .setWaitForAccurateLocation(false)
+            .setMaxUpdates(1)
+            .build()
+
+        val callback = object : LocationCallback() {
+            override fun onLocationResult(result: LocationResult) {
+                fusedClient.removeLocationUpdates(this)
+                val location = result.lastLocation ?: return
+                onLocationReceived(context, location.latitude, location.longitude)
             }
-            provider?.let { lm.requestLocationUpdates(it, 0L, 0f, listener) }
+        }
+
+        fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+    }
+
+    private fun onLocationReceived(context: Context, lat: Double, lon: Double) {
+        prefs.latitude  = lat
+        prefs.longitude = lon
+
+        // اسم المدينة
+        try {
+            @Suppress("DEPRECATION")
+            val addresses = Geocoder(context, Locale("ar"))
+                .getFromLocation(lat, lon, 1)
+            val city = addresses?.firstOrNull()?.locality
+                ?: addresses?.firstOrNull()?.subAdminArea
+                ?: addresses?.firstOrNull()?.adminArea
+                ?: "موقعك"
+            prefs.cityName = city
+            _state.update { it.copy(cityName = city) }
         } catch (_: Exception) {}
+
+        loadData(context, lat, lon)
     }
 
-    fun toggleDarkMode() {
-        val newDark = !_state.value.darkMode
-        prefs.edit().putBoolean("darkMode", newDark).apply()
-        _state.value = _state.value.copy(darkMode = newDark)
+    private fun loadData(context: Context, lat: Double, lon: Double) {
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true) }
+            val prayer  = prayerRepo.getPrayerTimes(lat, lon)
+            val weather = try { weatherRepo.getWeather(lat, lon) } catch (_: Exception) { WeatherData() }
+            _state.update {
+                it.copy(prayerData = prayer, weatherData = weather, isLoading = false, lat = lat, lon = lon)
+            }
+            try {
+                val times = prayerRepo.getScheduledPrayerTimes(lat, lon)
+                PrayerScheduler.scheduleAllPrayers(context, times)
+            } catch (_: Exception) {}
+        }
     }
 
-    override fun onCleared() { countdownJob?.cancel(); super.onCleared() }
+    private fun startCountdownTick() {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1_000)
+                val lat = prefs.latitude
+                val lon = prefs.longitude
+                if (lat == 0.0 && lon == 0.0) continue
+                try {
+                    val prayer = prayerRepo.getPrayerTimes(lat, lon)
+                    _state.update { it.copy(prayerData = prayer) }
+                } catch (_: Exception) {}
+            }
+        }
+    }
 }
